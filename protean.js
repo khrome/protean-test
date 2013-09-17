@@ -42,6 +42,8 @@ Protean.init = function(callback){
     });
 }
 
+Protean.db = db;
+
 /*function chiSquared(a, b, c, d){
     var e = a * d - b * c;
     return ( e * e * ( a + b + c + d) ) / ( (a + b) * (c + d) * (b + d) * (a + c) );
@@ -49,7 +51,7 @@ Protean.init = function(callback){
 
 function confidenceInterval(conversionRate, trialCount){
     var cvr = conversionRate * (1 - conversionRate);
-    return sqrt( cvr / trialCount );
+    return Math.sqrt( cvr / trialCount );
 }
 
 function cr(t){ 
@@ -59,10 +61,10 @@ function cr(t){
 function zscore(c, t){
     var z = cr(t) - cr(c);
     var s = (cr(t) * (1 - cr(t))) / t[0] + (cr(c) * (1 - cr(c))) / c[0];
-    return z / sqrt(s);
+    return z / Math.sqrt(s);
 }
 
-function cumulativeNormalDistribution($x){
+function cumulativeNormalDistribution(x){
     var b1 =  0.319381530;
     var b2 = -0.356563782;
     var b3 =  1.781477937;
@@ -72,12 +74,12 @@ function cumulativeNormalDistribution($x){
     var c  =  0.39894228;
     
     if(x >= 0.0) {
-        t = 1.0 / ( 1.0 + p * x );
-        return (1.0 - c * exp( - x * x / 2.0 ) * t *
+        var t = 1.0 / ( 1.0 + p * x );
+        return (1.0 - c * Math.exp( - x * x / 2.0 ) * t *
             ( t *( t * ( t * ( t * b5 + b4 ) + b3 ) + b2 ) + b1 ));
     }else{
-        t = 1.0 / ( 1.0 - p * x );
-        return ( c * exp( - x * x / 2.0 ) * t *
+        var t = 1.0 / ( 1.0 - p * x );
+        return ( c * Math.exp( - x * x / 2.0 ) * t *
             ( t *( t * ( t * ( t * b5 + b4 ) + b3 ) + b2 ) + b1 ));
     }
 }
@@ -87,19 +89,19 @@ function ssize(conv){
     var res = [];
     var bs = [0.0625, 0.0225, 0.0025];
     bs.forEach(function(b){
-        res.push( Math.floor( (1-conv) * a / (b * conv) ) );
+        res.push( Math.round( (1-conv) * a / (b * conv) ) );
     });
     return res;
 }
 
-function confidenceToWin($base, $version){
+function confidenceToWin(base, version){
     return cumulativeNormalDistribution(zscore( 
         [base['hits'], base['conversions']], 
         [version['hits'], version['conversions']] 
     ));
 }
 
-function percentImprovement(base, version){
+function percentImprovement(base, version){ //need to track historical values for this... todo
     return ((version['improvement'] / base['improvement']) -1);
 }
 
@@ -147,26 +149,24 @@ Protean.variant = function(variant, callback){
 
 Protean.convert = function(id, variant, callback){
     db.query(
-        'SELECT * FROM tests WHERE test = :test AND variant = :variant',
+        'SELECT * FROM tests WHERE test = "'+id+'" AND variant = "'+variant+'"',
         {
-            test: id,
-            variant: variant
-        },
-        {
+            name: String,
             test: String,
-            value: String
+            variant: String,
+            created: String,
+            hits: Number,
+            conversions: Number,
+            weight: Number
         },
         function(rows){
             if(rows[0]){
                 var variant = rows[0];
-                variant.hits++;
+                variant.conversions++;
                 db.query(
-                    'UPDATE hits=? WHERE test=? AND variant=?',
-                    [variant.hits, variant.test, variant.variant],
-                    function(){
-                        callback();
-                    }
+                    'UPDATE tests SET conversions="'+variant.conversions+'" WHERE test="'+variant.test+'" AND variant="'+variant.variant+'"'
                 );
+                callback();
             } //add error handling
         }
     );
@@ -174,27 +174,25 @@ Protean.convert = function(id, variant, callback){
 
 Protean.hit = function(id, variant, callback){
     db.query(
-        'SELECT * FROM tests WHERE test = :test AND variant = :variant',
+        'SELECT * FROM tests WHERE test = "'+id+'" AND variant = "'+variant+'"',
         {
-            test: id,
-            variant: variant
-        },
-        {
+            name: String,
             test: String,
-            value: String
+            variant: String,
+            created: String,
+            hits: Number,
+            conversions: Number,
+            weight: Number
         },
         function(rows){
             if(rows[0]){
                 var variant = rows[0];
-                variant.conversions++;
+                variant.hits++;
                 db.query(
-                    'UPDATE conversions=? WHERE test=? AND variant=?',
-                    [variant.conversions, variant.test, variant.variant],
-                    function(){
-                        callback();
-                    }
+                    'UPDATE tests SET hits="'+variant.hits+'" WHERE test="'+variant.test+'" AND variant="'+variant.variant+'"'
                 );
-            } //add error handling
+                callback();
+            } else throw new Error('no variant found');
         }
     );
 };
@@ -227,11 +225,15 @@ Protean.group = function(id, requestor, callback){
                         if(position >= index) selected = variant;
                     });
                     if(!selected) throw new Error('could not assign group!');
-                    db.query(
-                        'INSERT INTO bins(requestor, test, variant) VALUES (?, ?, ?)',
-                        [requestor[Protean.requestorIdentifier], selected.test, selected.variant]
-                    );
-                    callback(selected);
+                    db.query('INSERT INTO bins(requestor, test, variant) VALUES ("'+
+                        requestor[Protean.requestorIdentifier]+'", "'+
+                        selected.test+'", "'+
+                        selected.variant+
+                    '")');
+                    Protean.hit(id, selected.variant, function(){
+                        callback(selected);
+                    });
+                    
                 });
             }
         }
@@ -244,7 +246,11 @@ Protean.variants = function(id, callback){
         {
             name: String,
             test: String,
-            variant: String
+            variant: String,
+            created: String,
+            hits: Number,
+            conversions: Number,
+            weight: Number
         },
         function(rows){
             callback(rows || []);
@@ -252,8 +258,14 @@ Protean.variants = function(id, callback){
     );
 };
 
-Protean.summary = function(id, query, callback){ //get aggregate values
-    
+Protean.summary = function(id, callback){ //get aggregate values
+    Protean.variants(id, function(variants){
+        variants.forEach(function(item){
+           item.confidence =  Math.floor(confidenceToWin(variants[0], item) * 1000)/ 1000;
+           item.conversionRate = Math.round(item['conversions']/item['hits']*100)/100;
+        });
+        callback(variants);
+    });
 };
 
 Protean.passthru = function(id, requestor, passthru, conditions){

@@ -1,7 +1,7 @@
 {
     "name": "protean-test",
     "homepage": "https://github.com/khrome/protean-test",
-    "version": "0.0.1-alpha",
+    "version": "0.0.2-alpha",
     "main": "covered.js",
     "description": "Radically simple zscore based AB testing",
     "keywords": [],
